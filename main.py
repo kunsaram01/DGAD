@@ -529,54 +529,6 @@ def train(epoch):
             else:
                 loss = (num_lambda / args.bs) * loss_clean + ((args.bs - num_lambda) / args.bs) * loss_adv
 
-        elif args.method == 'RSLAD_DGAD':
-            adv_inputs = rslad_inner_loss(net, teacher_net, inputs, targets,
-                                          step_size=args.step_size / 255,
-                                          steps=args.num_steps, epsilon=args.epsilon / 255)
-
-            net.train()
-            optimizer.zero_grad()
-
-            ori_outputs = net(inputs)
-            adv_outputs = net(adv_inputs)
-
-            with torch.no_grad():
-                teacher_net.eval()
-                t_ori_outputs = teacher_net(inputs)
-                t_adv_outputs = teacher_net(adv_inputs)
-
-            KL_loss = nn.KLDivLoss(reduction='none')
-
-            # 오분류 샘플 인덱스 추출
-            t_incorrect_inx = (torch.argmax(t_ori_outputs, dim=1) != targets)  # teacher ori_inputs 오분류일때, 정답 라벨 반영
-            num_incorrect = t_incorrect_inx.sum().item() + 1e-10
-
-            # t(x) != y 인 경우, swap between max_probs and true_probs
-            ori_true_probs = torch.gather(t_ori_outputs, 1, targets.unsqueeze(1)).squeeze()  # 정답에 해당하는 확률값 저장
-            ori_max_probs, ori_max_indices = torch.max(t_ori_outputs, dim=1)  # 예측 라벨의 확률값과 인덱스 저장
-            t_ori_outputs[t_incorrect_inx, targets[t_incorrect_inx]] = ori_max_probs[t_incorrect_inx]  # 정답 위치의 확률값을 예측 확률값으로 교체
-            t_ori_outputs[t_incorrect_inx, ori_max_indices[t_incorrect_inx]] = ori_true_probs[t_incorrect_inx]  # 예측 라벨의 확률값을 정답 확률값으로 교체
-
-            # clean loss - teacher + gt (원본)
-            loss_clean = (1 / (num_incorrect)) * torch.sum(
-                KL_loss(F.log_softmax(ori_outputs[t_incorrect_inx], dim=1), F.softmax(t_ori_outputs[t_incorrect_inx].detach(), dim=1)).sum(dim=1))
-
-            # 적대적 예제 loss 계산시 missclassifed_group은 제외하고 계산
-            loss_adv = (1 / (len(adv_inputs) - num_incorrect)) * torch.sum(
-                                        KL_loss(F.log_softmax(adv_outputs[~t_incorrect_inx], dim=1),
-                                       F.softmax(t_ori_outputs[~t_incorrect_inx].detach(), dim=1)).sum(dim=1))
-
-            if args.alp == 'on':
-                loss_alp = nn.MSELoss()(F.softmax(adv_outputs, dim=1), F.softmax(ori_outputs, dim=1))
-                if args.model == 'mobilenetV2':
-                    loss = 0.5 * ((num_incorrect / args.bs) * loss_clean + (
-                            (args.bs - num_incorrect) / args.bs)) * loss_adv + args.ALP_beta * loss_alp
-                else:
-                    loss = (num_incorrect / args.bs) * loss_clean + (
-                            (args.bs - num_incorrect) / args.bs) * loss_adv + args.ALP_beta * loss_alp
-            else:
-                loss = (num_incorrect / args.bs) * loss_clean + ((args.bs - num_incorrect) / args.bs) * loss_adv
-
         else:
             raise NotImplementedError
 
